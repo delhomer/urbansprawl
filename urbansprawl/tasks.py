@@ -1359,7 +1359,7 @@ class ExtractLocalINSEEData(luigi.Task):
         local_insee_pop = get_extract_population_data(
             city_ref=self.city,
             data_source="insee",
-            pop_shapefile="./data/insee/bkp/carr_pop4326.shp",
+            pop_shapefile=insee_data_filename,
             pop_data_file=population_count_filename,
             to_crs=buildings.crs,
             polygons_gdf=buildings
