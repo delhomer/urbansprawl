@@ -24,7 +24,11 @@ from ..sprawl.landusemix import compute_grid_landusemix
 
 from shapely.geometry import Polygon
 
-def compute_full_urban_features(city_ref, df_osm_built=None, df_osm_pois=None, df_insee=None, data_source=None, kwargs={"max_dispersion":15}):
+def compute_full_urban_features(city_ref, df_osm_built=None, df_osm_pois=None,
+                                df_insee=None, data_source=None,
+                                landusemix_args={'walkable_distance':600,'compute_activity_types_kde':True,'weighted_kde':True,'pois_weight':9,'log_weighted':True},
+                                dispersion_args={"radius_search":750, "use_median":True, "K_nearest":50},
+                                kwargs={"max_dispersion":15}):
 	"""
 	Computes a set of urban features for each square where population count data exists
 
@@ -168,9 +172,11 @@ def compute_full_urban_features(city_ref, df_osm_built=None, df_osm_pois=None, d
 	'''
 
 	# Compute land uses mix + densities estimation
-	compute_grid_landusemix(df_insee_urban_features, df_osm_built, df_osm_pois)
+	compute_grid_landusemix(df_insee_urban_features, df_osm_built,
+                                df_osm_pois, landusemix_args)
 	# Dispersion indices
-	compute_grid_dispersion(df_insee_urban_features, df_osm_built)
+	compute_grid_dispersion(df_insee_urban_features, df_osm_built,
+                                dispersion_args)
 
 	if (kwargs.get("max_dispersion")): # Set max bounds for dispersion values
 		df_insee_urban_features.loc[ df_insee_urban_features.dispersion > kwargs.get("max_dispersion"), "dispersion" ] = kwargs.get("max_dispersion")

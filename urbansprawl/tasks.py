@@ -51,6 +51,9 @@ from urbansprawl.sprawl.landusemix import compute_grid_landusemix
 from urbansprawl.sprawl.accessibility import compute_grid_accessibility
 from urbansprawl.sprawl.dispersion import compute_grid_dispersion
 from urbansprawl.population.data_extract import get_extract_population_data
+from urbansprawl.population.urban_features import (compute_full_urban_features,
+                                                   get_training_testing_data)
+
 
 # Columns of interest corresponding to OSM keys
 OSM_TAG_COLUMNS = [ "amenity", "landuse", "leisure", "shop", "man_made",
@@ -1269,7 +1272,6 @@ class UnzipINSEEData(luigi.Task):
             zip_ref.close()
 
 
-
 class StoreINSEEGridAsShapefile(luigi.Task):
     """Store image labels to a database, considering that the input format is
     MapInfo. We use `ogr2ogr` program, and consider the task as accomplished
@@ -1282,7 +1284,7 @@ class StoreINSEEGridAsShapefile(luigi.Task):
 
     """
     datapath = luigi.Parameter("./data")
-    
+
     def requires(self):
         return UnzipINSEEData(self.datapath)
 
@@ -1423,3 +1425,142 @@ class PlotINSEEData(luigi.Task):
         ax.set_title("INSEE gridded population (in inhabitants)", fontsize=15)
         fig.tight_layout()
         fig.savefig(self.output().path)
+
+
+class ComputePopulationFeatures(luigi.Task):
+    """
+    """
+    city = luigi.Parameter()
+    datapath = luigi.Parameter("./data")
+    geoformat = luigi.Parameter("geojson")
+    date_query = luigi.DateMinuteParameter(default=date.today())
+    step = luigi.IntParameter(default=400)
+    default_height = luigi.IntParameter(3)
+    meters_per_level = luigi.IntParameter(3)
+    walkable_distance = luigi.IntParameter(600)
+    compute_activity_types_kd = luigi.BoolParameter()
+    weighted_kde = luigi.BoolParameter()
+    pois_weights = luigi.IntParameter(9)
+    log_weighted = luigi.BoolParameter()
+    radius_search = luigi.IntParameter(750)
+    use_median = luigi.BoolParameter() # False
+    K_nearest = luigi.IntParameter(50)
+
+    def requires(self):
+        return {"buildings": ComputeLandUse(self.city, self.datapath,
+                                            self.geoformat, self.date_query,
+                                            self.default_height,
+                                            self.meters_per_level),
+                "pois": SetupProjection(self.city, self.datapath,
+                                        self.geoformat, self.date_query,
+                                        "pois"),
+                "landuse": ComputeGridLandUseMix(self.city, self.datapath,
+                                                 self.geoformat,
+                                                 self.date_query,
+                                                 self.step,
+                                                 self.default_height,
+                                                 self.meters_per_level,
+                                                 self.walkable_distance,
+                                                 self.compute_activity_types_kd,
+                                                 self.weighted_kde,
+                                                 self.pois_weights,
+                                                 self.log_weighted),
+                "dispersion": ComputeGridDispersion(self.city, self.datapath,
+                                                    self.geoformat,
+                                                    self.date_query,
+                                                    self.step,
+                                                    self.default_height,
+                                                    self.meters_per_level,
+                                                    self.radius_search,
+                                                    self.use_median,
+                                                    self.K_nearest),
+                "insee": ExtractLocalINSEEData(self.city, self.datapath,
+                                               self.geoformat, self.date_query,
+                                               self.default_height,
+                                               self.meters_per_level)}
+
+    def output(self):
+        filepath = os.path.join(
+            self.datapath, self.city, "population_features.geojson"
+        )
+        return luigi.LocalTarget(filepath)
+
+    def run(self):
+        buildings = gpd.read_file(self.input()["buildings"].path)
+        pois = gpd.read_file(self.input()["pois"].path)
+        landuse_mix = gpd.read_file(self.input()["landuse"].path)
+        dispersion = gpd.read_file(self.input()["dispersion"].path)
+        insee_pop = gpd.read_file(self.input()["insee"].path)
+        proj_path = os.path.join(
+            self.datapath, self.city, "utm_projection.json"
+        )
+        with open(proj_path) as fobj:
+            utm_proj = json.load(fobj)
+            buildings.crs = utm_proj
+            pois.crs = utm_proj
+            insee_pop.crs = utm_proj
+        landusemix_args = {'walkable_distance': self.walkable_distance,
+                           'compute_activity_types_kde': self.compute_activity_types_kd,
+                           'weighted_kde': self.weighted_kde,
+                           'pois_weight': self.pois_weights,
+                           'log_weighted': self.log_weighted}
+        dispersion_args = {'radius_search': self.radius_search,
+                           'use_median': self.use_median,
+                           'K_nearest': self.K_nearest}
+        gdf = compute_full_urban_features(self.city,
+                                          buildings,
+                                          pois,
+                                          insee_pop,
+                                          "insee",
+                                          landusemix_args,
+                                          dispersion_args)
+        gdf.to_file(self.output().path, driver="GeoJSON")
+
+
+class SplitPopulationFeatures(luigi.Task):
+    """
+    """
+    city = luigi.Parameter()
+    datapath = luigi.Parameter("./data")
+    geoformat = luigi.Parameter("geojson")
+    date_query = luigi.DateMinuteParameter(default=date.today())
+    step = luigi.IntParameter(default=400)
+    default_height = luigi.IntParameter(3)
+    meters_per_level = luigi.IntParameter(3)
+    walkable_distance = luigi.IntParameter(600)
+    compute_activity_types_kd = luigi.BoolParameter()
+    weighted_kde = luigi.BoolParameter()
+    pois_weights = luigi.IntParameter(9)
+    log_weighted = luigi.BoolParameter()
+    radius_search = luigi.IntParameter(750)
+    use_median = luigi.BoolParameter() # False
+    K_nearest = luigi.IntParameter(50)
+
+    def requires(self):
+        return ComputePopulationFeatures(self.city, self.datapath,
+                                         self.geoformat, self.date_query,
+                                         self.step, self.default_height,
+                                         self.meters_per_level,
+                                         self.walkable_distance,
+                                         self.compute_activity_types_kd,
+                                         self.weighted_kde,
+                                         self.pois_weights,
+                                         self.log_weighted,
+                                         self.radius_search,
+                                         self.use_median,
+                                         self.K_nearest)
+
+    def output(self):
+        filepath = os.path.join(
+            self.datapath, "training", self.city + "_X_Y.npz"
+        )
+        return luigi.LocalTarget(filepath)
+
+    def run(self):
+        population_features = gpd.read_file(self.input().path)
+        proj_path = os.path.join(
+            self.datapath, self.city, "utm_projection.json"
+        )
+        with open(proj_path) as fobj:
+            population_features.crs = json.load(fobj)
+        get_training_testing_data(self.city, population_features)
