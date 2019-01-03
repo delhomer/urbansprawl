@@ -6,6 +6,10 @@
 import geopandas as gpd
 import osmnx as ox
 
+from keras import callbacks, optimizers
+from keras.models import Sequential
+from keras.layers import Activation, Flatten, Conv1D
+
 def proportional_population_downscaling(df_osm_built, df_insee):
 	"""
 	Performs a proportional population downscaling considering the surface dedicated to residential land use
@@ -58,3 +62,56 @@ def proportional_population_downscaling(df_osm_built, df_insee):
 	# Drop unnecessary column
 	df_osm_built.drop('geom', axis=1, inplace=True)
 
+
+def neural_network_population_downscaling(X_train, Y_train, X_val, Y_val,
+                                          batch_size, epochs,
+                                          checkpoint_filename):
+        """
+        Performs a population downscaling by feeding a neural network with
+                                          various OSM-related features
+
+	Associates the estimated population to each building in column 'population'
+
+	Parameters
+	----------
+	X_train :
+        Y_train :
+        X_val :
+        Y_val :
+        batch_size : int
+        epochs : int
+        checkpoint_filenames : str
+
+	Returns
+	----------
+        keras.models.Sequential
+
+        """
+        _, input_shape_pixels, input_shape_features = X_train.shape
+        input_shape = (input_shape_pixels, input_shape_features)
+        model = Sequential()
+        model.add(Conv1D(filters=10, kernel_size=1,
+                         strides=1, input_shape=input_shape))
+        model.add(Activation("relu"))
+        model.add(Conv1D(filters=5, kernel_size=1, strides=1))
+        model.add(Activation("relu"))
+        model.add(Conv1D(filters=1, kernel_size=1, strides=1))
+        model.add(Activation("relu"))
+        model.add(Flatten())
+        model.add(Activation("softmax"))
+        opt = optimizers.SGD(lr=0.01, decay=1e-6, momentum=0.9, nesterov=True)
+        model.compile(loss="mean_absolute_error",
+                      optimizer=opt,
+                      metrics=["mae"])
+        model.summary()
+        checkpoint = callbacks.ModelCheckpoint(
+                checkpoint_filename, monitor='val_loss', verbose=0,
+                save_best_only=True, save_weights_only=False,
+                mode='auto', period=1
+        )
+        history = model.fit(X_train, Y_train,
+                            batch_size=batch_size,
+                            epochs=epochs,
+                            verbose=1, validation_data=(X_val, Y_val),
+                            callbacks=[checkpoint])
+        return history
