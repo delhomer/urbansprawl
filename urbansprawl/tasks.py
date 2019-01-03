@@ -511,8 +511,9 @@ class InferLandUse(luigi.Task):
         land_uses = gpd.read_file(self.input()["land-uses"].path)
         proj_path = os.path.join(self.datapath, self.city, "utm_projection.json")
         with open(proj_path) as fobj:
-            buildings.crs = json.load(fobj)
-            land_uses.crs = json.load(fobj)
+            utm_proj = json.load(fobj)
+            buildings.crs = utm_proj
+            land_uses.crs = utm_proj
         compute_landuse_inference(buildings, land_uses)
         assert(len(buildings[buildings.key_value=={"inferred":"other"} ]) == 0)
         assert(len(buildings[buildings.classification.isnull()]) == 0)
@@ -576,9 +577,10 @@ class ComputeLandUse(luigi.Task):
         building_parts = gpd.read_file(self.input()["building-parts"].path)
         pois = gpd.read_file(self.input()["pois"].path)
         with open(proj_path) as fobj:
-            buildings.crs = json.load(fobj)
-            building_parts.crs = json.load(fobj)
-            pois.crs = json.load(fobj)
+            utm_proj = json.load(fobj)
+            buildings.crs = utm_proj
+            building_parts.crs = utm_proj
+            pois.crs = utm_proj
         associate_structures(buildings, building_parts,
                              operation='contains', column='containing_parts')
         associate_structures(buildings, pois,
