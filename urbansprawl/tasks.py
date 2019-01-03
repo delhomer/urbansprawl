@@ -31,6 +31,7 @@ import geopandas as gpd
 import luigi
 from luigi.format import MixedUnicodeBytes
 from mpl_toolkits.axes_grid1 import make_axes_locatable
+import matplotlib.pyplot as plt
 import numpy as np
 import osmnx
 import pandas as pd
@@ -53,8 +54,9 @@ from urbansprawl.sprawl.accessibility import compute_grid_accessibility
 from urbansprawl.sprawl.dispersion import compute_grid_dispersion
 from urbansprawl.population.data_extract import get_extract_population_data
 from urbansprawl.population.urban_features import (compute_full_urban_features,
-                                                   get_training_testing_data)
-
+                                                   get_training_testing_data,
+                                                   get_Y_X_features_population_data)
+from urbansprawl.population.downscaling import neural_network_population_downscaling
 
 # Columns of interest corresponding to OSM keys
 OSM_TAG_COLUMNS = [ "amenity", "landuse", "leisure", "shop", "man_made",
@@ -1579,3 +1581,66 @@ class SplitPopulationFeatures(luigi.Task):
         with open(proj_path) as fobj:
             population_features.crs = json.load(fobj)
         get_training_testing_data(self.city, population_features)
+
+
+class TrainPopulationDownscalingModel(luigi.Task):
+    """
+    """
+    training_cities = luigi.ListParameter()
+    validation_cities = luigi.ListParameter()
+    datapath = luigi.Parameter("./data")
+    geoformat = luigi.Parameter("geojson")
+    date_query = luigi.DateMinuteParameter(default=date.today())
+    step = luigi.IntParameter(default=400)
+    default_height = luigi.IntParameter(3)
+    meters_per_level = luigi.IntParameter(3)
+    walkable_distance = luigi.IntParameter(600)
+    compute_activity_types_kd = luigi.BoolParameter()
+    weighted_kde = luigi.BoolParameter()
+    pois_weights = luigi.IntParameter(9)
+    log_weighted = luigi.BoolParameter()
+    radius_search = luigi.IntParameter(750)
+    use_median = luigi.BoolParameter() # False
+    K_nearest = luigi.IntParameter(50)
+    batch_size = luigi.IntParameter(32)
+    epochs = luigi.IntParameter(50)
+
+    def requires(self):
+        for city in self.training_cities + self.validation_cities:
+            yield SplitPopulationFeatures(
+                city, self.datapath, self.geoformat, self.date_query,
+                self.step, self.default_height, self.meters_per_level,
+                self.walkable_distance, self.compute_activity_types_kd,
+                self.weighted_kde, self.pois_weights, self.log_weighted,
+                self.radius_search, self.use_median, self.K_nearest
+            )
+
+    def output(self):
+        isodate = dt.date(self.date_query).isoformat()
+        filepath = os.path.join(
+            self.datapath, "training",
+            "checkpoint-step" + str(self.epochs) + "-" + isodate + ".h5"
+        )
+        return luigi.LocalTarget(filepath)
+
+    def run(self):
+        Y_train, X_train, _ = get_Y_X_features_population_data(
+            cities_selection=self.training_cities
+        )
+        Y_val, X_val, _ = get_Y_X_features_population_data(
+            cities_selection=self.validation_cities
+        )
+        hist = neural_network_population_downscaling(
+            X_train, Y_train, X_val, Y_val,
+            self.batch_size, self.epochs, self.output().path
+        )
+        fig = plt.figure()
+        ax = fig.add_subplot(1, 1, 1)
+        for k in hist.history.keys():
+            if "mean_absolute_error" not in k:
+                continue
+            l = "Validation error" if "val" in k else "Training error"
+            ax.plot(hist.history[k], label=l)
+        ax.legend(loc="upper right")
+        fig.tight_layout()
+        fig.savefig(self.output().path.replace(".h5", ".png"))
