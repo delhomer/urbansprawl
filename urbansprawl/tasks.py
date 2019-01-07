@@ -56,7 +56,7 @@ from urbansprawl.population.data_extract import get_extract_population_data
 from urbansprawl.population.urban_features import (compute_full_urban_features,
                                                    get_training_testing_data,
                                                    get_Y_X_features_population_data)
-from urbansprawl.population.downscaling import neural_network_population_downscaling
+from urbansprawl.population.downscaling import (train_population_downscaling_model, build_downscaling_cnn)
 
 # Columns of interest corresponding to OSM keys
 OSM_TAG_COLUMNS = [ "amenity", "landuse", "leisure", "shop", "man_made",
@@ -1632,7 +1632,7 @@ class TrainPopulationDownscalingModel(luigi.Task):
         Y_val, X_val, _ = get_Y_X_features_population_data(
             cities_selection=self.validation_cities
         )
-        hist = neural_network_population_downscaling(
+        hist = train_population_downscaling_model(
             X_train, Y_train, X_val, Y_val,
             self.batch_size, self.epochs, self.output().path
         )
