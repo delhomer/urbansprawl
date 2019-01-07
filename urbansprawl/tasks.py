@@ -1646,3 +1646,64 @@ class TrainPopulationDownscalingModel(luigi.Task):
         ax.legend(loc="upper right")
         fig.tight_layout()
         fig.savefig(self.output().path.replace(".h5", ".png"))
+
+
+class InferPopulationDownscaling(luigi.Task):
+    """
+    """
+    city = luigi.Parameter()
+    training_cities = luigi.ListParameter()
+    validation_cities = luigi.ListParameter()
+    datapath = luigi.Parameter("./data")
+    geoformat = luigi.Parameter("geojson")
+    date_query = luigi.DateMinuteParameter(default=date.today())
+    step = luigi.IntParameter(default=400)
+    default_height = luigi.IntParameter(3)
+    meters_per_level = luigi.IntParameter(3)
+    walkable_distance = luigi.IntParameter(600)
+    compute_activity_types_kd = luigi.BoolParameter()
+    weighted_kde = luigi.BoolParameter()
+    pois_weights = luigi.IntParameter(9)
+    log_weighted = luigi.BoolParameter()
+    radius_search = luigi.IntParameter(750)
+    use_median = luigi.BoolParameter() # False
+    K_nearest = luigi.IntParameter(50)
+    batch_size = luigi.IntParameter(32)
+    epochs = luigi.IntParameter(50)
+
+    def requires(self):
+        return {"model": TrainPopulationDownscalingModel(
+            self.training_cities, self.validation_cities,
+            self.datapath, self.geoformat, self.date_query,
+            self.step, self.default_height, self.meters_per_level,
+            self.walkable_distance, self.compute_activity_types_kd,
+            self.weighted_kde, self.pois_weights, self.log_weighted,
+            self.radius_search, self.use_median, self.K_nearest),
+                "features": SplitPopulationFeatures(
+                    self.city, self.datapath, self.geoformat, self.date_query,
+                    self.step, self.default_height, self.meters_per_level,
+                    self.walkable_distance, self.compute_activity_types_kd,
+                    self.weighted_kde, self.pois_weights, self.log_weighted,
+                    self.radius_search, self.use_median, self.K_nearest
+                )
+        }
+
+    def output(self):
+        os.makedirs(os.path.join(self.datapath, "inference"), exist_ok=True)
+        filepath = os.path.join(
+            self.datapath, "inference", self.city + "_X_Y.npz"
+        )
+        return luigi.LocalTarget(filepath)
+
+    def run(self):
+        Y_train, X_train, _ = get_Y_X_features_population_data(
+            cities_selection=self.training_cities
+        )
+        Y_val, X_val, _ = get_Y_X_features_population_data(
+            cities_selection=self.validation_cities
+        )
+        model = build_downscaling_cnn(X_train, Y_train, X_val, Y_val)
+        model.load_weights(self.input()["model"].path)
+        data = np.load(self.input()["features"].path)
+        y_pred = model.predict(data["X"])
+        print(y_pred)
