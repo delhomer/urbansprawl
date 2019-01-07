@@ -862,7 +862,8 @@ class PlotLandUseMix(luigi.Task):
                                    edge_alpha=0.3,
                                    node_alpha=0.1)
         ax.set_title(f"{self.plotted_feature} kernel density (0: low, 1: high)")
-        grid_land_use.plot(self.plotted_feature, cmap='YlOrRd', ax=ax, legend=True)
+        grid_land_use.plot(self.plotted_feature, cmap='YlOrRd', ax=ax,
+                           legend=True, vmin=0, vmax=1)
         fig.tight_layout()
         fig.savefig(self.output().path)
 
@@ -1424,7 +1425,7 @@ class PlotINSEEData(luigi.Task):
             graph, fig_height=self.figsize, fig_width=self.figsize, close=False,
             show=False, edge_color='black', edge_alpha=0.15, node_alpha=0.05
         )
-        population.plot("pop_count", ax=ax, cmap='YlOrRd', legend=True)
+        population.plot("pop_count", ax=ax, cmap='YlOrRd', legend=True, vmin=0)
         ax.set_title("INSEE gridded population (in inhabitants)", fontsize=15)
         fig.tight_layout()
         fig.savefig(self.output().path)
