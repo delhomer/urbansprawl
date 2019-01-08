@@ -818,6 +818,7 @@ class PlotLandUseMix(luigi.Task):
     pois_weights = luigi.IntParameter(9)
     log_weighted = luigi.BoolParameter()
     plotted_feature = luigi.Parameter()
+    figsize = luigi.IntParameter(8)
 
     def requires(self):
         return {"grid": ComputeGridLandUseMix(self.city, self.datapath,
@@ -852,17 +853,18 @@ class PlotLandUseMix(luigi.Task):
             raise ValueError("Choose a valid feature to plot amongst"
                              f" {valid_features}")
         graph = osmnx.load_graphml(self.input()["graph"].path, folder="")
-        figsize=(8, 8)
         fig, ax = osmnx.plot_graph(graph,
-                                   fig_height=figsize[1],
-                                   fig_width=figsize[0],
+                                   fig_height=self.figsize,
+                                   fig_width=self.figsize,
                                    close=False,
                                    show=False,
                                    edge_color='black',
                                    edge_alpha=0.3,
                                    node_alpha=0.1)
         ax.set_title(f"{self.plotted_feature} kernel density (0: low, 1: high)")
-        grid_land_use.plot(self.plotted_feature, cmap='YlOrRd', ax=ax, legend=True)
+        grid_land_use.plot(self.plotted_feature, cmap='YlOrRd', ax=ax,
+                           legend=True, vmin=0, vmax=1)
+        fig.tight_layout()
         fig.savefig(self.output().path)
 
 
@@ -997,6 +999,7 @@ class PlotAccessibility(luigi.Task):
     fixed_distance_max_travel_distance = luigi.IntParameter(2000)
     fixed_distance_max_num_activities = luigi.IntParameter(250)
     fixed_activities_min_number = luigi.IntParameter(20)
+    figsize = luigi.IntParameter(8)
 
     def requires(self):
         return {"grid": ComputeGridAccessibility(self.city, self.datapath,
@@ -1028,8 +1031,8 @@ class PlotAccessibility(luigi.Task):
         grid_accessibility = gpd.read_file(self.input()["grid"].path)
         graph = osmnx.load_graphml(self.input()["graph"].path, folder="")
         fig, ax = osmnx.plot_graph(graph,
-                                   fig_height=8,
-                                   fig_width=8,
+                                   fig_height=self.figsize,
+                                   fig_width=self.figsize,
                                    close=False,
                                    show=False,
                                    edge_color='black',
@@ -1158,6 +1161,7 @@ class PlotDispersion(luigi.Task):
     radius_search = luigi.IntParameter(750)
     use_median = luigi.BoolParameter() # False
     K_nearest = luigi.IntParameter(50)
+    figsize = luigi.IntParameter(8)
 
     def requires(self):
         return {"grid": ComputeGridDispersion(self.city, self.datapath,
@@ -1185,8 +1189,8 @@ class PlotDispersion(luigi.Task):
         grid_dispersion = gpd.read_file(self.input()["grid"].path)
         graph = osmnx.load_graphml(self.input()["graph"].path, folder="")
         fig, ax = osmnx.plot_graph(graph,
-                                   fig_height=8,
-                                   fig_width=8,
+                                   fig_height=self.figsize,
+                                   fig_width=self.figsize,
                                    close=False,
                                    show=False,
                                    edge_color='black',
@@ -1392,6 +1396,7 @@ class PlotINSEEData(luigi.Task):
     date_query = luigi.DateMinuteParameter(default=date.today())
     default_height = luigi.IntParameter(3)
     meters_per_level = luigi.IntParameter(3)
+    figsize = luigi.IntParameter(8)
 
     def requires(self):
         return {"population": ExtractLocalINSEEData(self.city, self.datapath,
@@ -1416,12 +1421,11 @@ class PlotINSEEData(luigi.Task):
         )
         with open(proj_path) as fobj:
             population.crs = json.load(fobj)
-        figsize=(8, 8)
         fig, ax = osmnx.plot_graph(
-            graph, fig_height=figsize[1], fig_width=figsize[0], close=False,
+            graph, fig_height=self.figsize, fig_width=self.figsize, close=False,
             show=False, edge_color='black', edge_alpha=0.15, node_alpha=0.05
         )
-        population.plot("pop_count", ax=ax, cmap='YlOrRd', legend=True)
+        population.plot("pop_count", ax=ax, cmap='YlOrRd', legend=True, vmin=0)
         ax.set_title("INSEE gridded population (in inhabitants)", fontsize=15)
         fig.tight_layout()
         fig.savefig(self.output().path)
