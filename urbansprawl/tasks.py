@@ -30,6 +30,7 @@ import zipfile
 import geopandas as gpd
 import luigi
 from luigi.format import MixedUnicodeBytes
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 import numpy as np
 import osmnx
 import pandas as pd
@@ -861,9 +862,11 @@ class PlotLandUseMix(luigi.Task):
                                    edge_color='black',
                                    edge_alpha=0.3,
                                    node_alpha=0.1)
+        divider = make_axes_locatable(ax)
+        cax = divider.append_axes("right", size="5%", pad=0.2)
         ax.set_title(f"{self.plotted_feature} kernel density (0: low, 1: high)")
         grid_land_use.plot(self.plotted_feature, cmap='YlOrRd', ax=ax,
-                           legend=True, vmin=0, vmax=1)
+                           cax=cax, legend=True, vmin=0, vmax=1)
         fig.tight_layout()
         fig.savefig(self.output().path)
 
@@ -1038,10 +1041,13 @@ class PlotAccessibility(luigi.Task):
                                    edge_color='black',
                                    edge_alpha=0.3,
                                    node_alpha=0.1)
+        divider = make_axes_locatable(ax)
+        cax = divider.append_axes("right", size="5%", pad=0.2)
         ax.set_title("Accessibility (measured as the number of accessible POIs)")
         grid_accessibility.plot("accessibility",
                                 cmap='YlOrRd',
                                 ax=ax,
+                                cax=cax,
                                 legend=True,
                                 vmin=0,
                                 vmax=self.fixed_distance_max_num_activities)
@@ -1196,9 +1202,11 @@ class PlotDispersion(luigi.Task):
                                    edge_color='black',
                                    edge_alpha=0.3,
                                    node_alpha=0.1)
+        divider = make_axes_locatable(ax)
+        cax = divider.append_axes("right", size="5%", pad=0.2)
         ax.set_title("Dispersion (averaged distance between buildings, in meters)")
         grid_dispersion.plot("dispersion", cmap='YlOrRd', ax=ax,
-                             legend=True, vmin=0, vmax=10)
+                             cax=cax, legend=True, vmin=0, vmax=10)
         fig.tight_layout()
         fig.savefig(self.output().path)
 
@@ -1425,7 +1433,10 @@ class PlotINSEEData(luigi.Task):
             graph, fig_height=self.figsize, fig_width=self.figsize, close=False,
             show=False, edge_color='black', edge_alpha=0.15, node_alpha=0.05
         )
-        population.plot("pop_count", ax=ax, cmap='YlOrRd', legend=True, vmin=0)
+        divider = make_axes_locatable(ax)
+        cax = divider.append_axes("right", size="5%", pad=0.2)
+        population.plot("pop_count", ax=ax, cax=cax,
+                        cmap='YlOrRd', legend=True, vmin=0)
         ax.set_title("INSEE gridded population (in inhabitants)", fontsize=15)
         fig.tight_layout()
         fig.savefig(self.output().path)
