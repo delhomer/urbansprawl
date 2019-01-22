@@ -4,7 +4,7 @@
 defended in november 2018 by Luciano Gervasoni at Inria. Thanks to Luciano for
 the seminal developments (https://github.com/lgervasoni/urbansprawl)!  Oslandia
 takes over from Inria fellows for industrial developments, and **now hosts the
-upstream version of the project**.*
+upstream version of the project (https://github.com/Oslandia/urbansprawl)**.*
 
 The project provides an open source framework for assessing urban sprawl using
 open data. It uses OpenStreetMap (OSM) data to calculate its sprawling indices,
