@@ -1230,14 +1230,11 @@ class PlotDispersion(luigi.Task):
 
 
 class GetINSEEData(luigi.Task):
-    """
+    """Download INSEE carroyed data (200m*200m resolution)
+
     INSEE data access:
 
     https://www.insee.fr/fr/statistiques/fichier/2520034/200m-carreaux-metropole.zip
-
-    GPW data access:
-
-    http://sedac.ciesin.columbia.edu/downloads/data/gpw-v4/gpw-v4-population-count-rev10/gpw-v4-population-count-rev10_2015_30_sec_tif.zip
 
     Attributes
     ----------
@@ -1400,7 +1397,8 @@ class StoreINSEEGridAsShapefile(luigi.Task):
 
 
 class ExtractLocalINSEEData(luigi.Task):
-    """
+    """Extract INSEE data for a local area defined by the city of interest
+
     Attributes
     ----------
     city : str
@@ -1461,7 +1459,8 @@ class ExtractLocalINSEEData(luigi.Task):
 
 
 class PlotINSEEData(luigi.Task):
-    """
+    """Plot the INSEE local data for "city" on a GeoPandas choropleth; this
+    data has a 200m*200m resolution
 
     Attributes
     ----------
@@ -1558,7 +1557,6 @@ class ExtractLocalGPWData(luigi.Task):
         city_gdf = gpd.read_file(self.input()["bbox"].path)
         north, south, east, west = city_gdf.loc[0, ["bbox_north", "bbox_south",
                                                     "bbox_east", "bbox_west"]]
-        print(north, south, east, west)
         gdal.Translate(
             self.output().path,
             os.path.join(self.datapath, "gpw", self.filename + ".tif"),
@@ -1610,7 +1608,8 @@ class VectorizeLocalGPWData(luigi.Task):
 
 
 class PlotGPWData(luigi.Task):
-    """
+    """Plot the GPW local data for "city" on a GeoPandas choropleth; this
+    data has a 1km*1km resolution
 
     Attributes
     ----------
@@ -1623,10 +1622,6 @@ class PlotGPWData(luigi.Task):
     date_query : str
         Date to which the OpenStreetMap data must be recovered (format:
     AAAA-MM-DDThhmm)
-    default_height : int
-        Default building height, in meters (default: 3 meters)
-    meters_per_level : int
-        Default height per level, in meter (default: 3 meters)
     """
     city = luigi.Parameter()
     datapath = luigi.Parameter("./data")
@@ -1672,7 +1667,44 @@ class PlotGPWData(luigi.Task):
 
 
 class ComputePopulationFeatures(luigi.Task):
-    """
+    """Compute population downscaling training features for "city" area,
+    knowing a set of urbansprawl parameters.
+
+    The features are stored as a new geojson file into the corresponding
+    repository.
+
+    Attributes
+    ----------
+    city : str
+        City of interest
+    datapath : str
+        Indicates the folder where the task result has to be serialized
+    geoformat : str
+        Output file extension (by default: `GeoJSON`)
+    date_query : str
+        Date to which the OpenStreetMap data must be recovered (format:
+    AAAA-MM-DDThhmm)
+    step : int
+    default_height : int
+        Default building height, in meters (default: 3 meters)
+    meters_per_level : int
+        Default height per level, in meter (default: 3 meters)
+    walkable_distance : int
+            the bandwidth assumption for Kernel Density Estimation calculations
+    (meters)
+    compute_activity_types_kde : bool
+            determines if the densities for each activity type should be
+    computed
+    weighted_kde : bool
+            use Weighted Kernel Density Estimation or classic version
+    pois_weight : int
+            Points of interest weight equivalence with buildings (squared
+    meter)
+    log_weighted : bool
+            apply natural logarithmic function to surface weights
+    radius_search : int
+    use_median : bool
+    K_nearest : int
     """
     city = luigi.Parameter()
     datapath = luigi.Parameter("./data")
@@ -1762,7 +1794,46 @@ class ComputePopulationFeatures(luigi.Task):
 
 
 class SplitPopulationFeatures(luigi.Task):
-    """
+    """Prepare population features in order to train a downscaling model;
+    i.e. use data structure that allow to stores the inputs on the one hand
+    (population density at a coarse-grained scale, urbansprawl features) and
+    the output on the other hand (population density at a fine-grained scale).
+
+    The resulting data is stored in "<datapath>/training/" so as to anticipate
+    the training process.
+
+    Attributes
+    ----------
+    city : str
+        City of interest
+    datapath : str
+        Indicates the folder where the task result has to be serialized
+    geoformat : str
+        Output file extension (by default: `GeoJSON`)
+    date_query : str
+        Date to which the OpenStreetMap data must be recovered (format:
+    AAAA-MM-DDThhmm)
+    step : int
+    default_height : int
+        Default building height, in meters (default: 3 meters)
+    meters_per_level : int
+        Default height per level, in meter (default: 3 meters)
+    walkable_distance : int
+            the bandwidth assumption for Kernel Density Estimation calculations
+    (meters)
+    compute_activity_types_kde : bool
+            determines if the densities for each activity type should be
+    computed
+    weighted_kde : bool
+            use Weighted Kernel Density Estimation or classic version
+    pois_weight : int
+            Points of interest weight equivalence with buildings (squared
+    meter)
+    log_weighted : bool
+            apply natural logarithmic function to surface weights
+    radius_search : int
+    use_median : bool
+    K_nearest : int
     """
     city = luigi.Parameter()
     datapath = luigi.Parameter("./data")
@@ -1811,7 +1882,54 @@ class SplitPopulationFeatures(luigi.Task):
 
 
 class TrainPopulationDownscalingModel(luigi.Task):
-    """
+    """Train a population downscaling model so as automatically determine the
+    population density at a fine-grained scale.
+
+    The model is a deep convolutional neural network that use urbansprawl
+    features and population density at 1km*1km scale. It predicts population
+    density at 200m*200m scale.
+
+    Every grid cell of "training_cities" is used for training, whilst every
+    grid cell of "validation_cities" is used for validation. The user is
+    expected to pass significant data in both sets.
+
+    Attributes
+    ----------
+    city : str
+        City of interest
+    datapath : str
+        Indicates the folder where the task result has to be serialized
+    geoformat : str
+        Output file extension (by default: `GeoJSON`)
+    date_query : str
+        Date to which the OpenStreetMap data must be recovered (format:
+    AAAA-MM-DDThhmm)
+    step : int
+    default_height : int
+        Default building height, in meters (default: 3 meters)
+    meters_per_level : int
+        Default height per level, in meter (default: 3 meters)
+    walkable_distance : int
+            the bandwidth assumption for Kernel Density Estimation calculations
+    (meters)
+    compute_activity_types_kde : bool
+            determines if the densities for each activity type should be
+    computed
+    weighted_kde : bool
+            use Weighted Kernel Density Estimation or classic version
+    pois_weight : int
+            Points of interest weight equivalence with buildings (squared
+    meter)
+    log_weighted : bool
+            apply natural logarithmic function to surface weights
+    radius_search : int
+    use_median : bool
+    K_nearest : int
+    batch_size : int
+        Number of gridded sample to consider in each batch of data (must be
+    small if limited computing resources)
+    epochs : int
+        Number of times the data are exploited during training process
     """
     training_cities = luigi.ListParameter()
     validation_cities = luigi.ListParameter()
@@ -1873,8 +1991,51 @@ class TrainPopulationDownscalingModel(luigi.Task):
         fig.savefig(self.output().path.replace(".h5", ".png"))
 
 
-class InferPopulationDownscaling(luigi.Task):
-    """
+class InferINSEEPopulationDownscaling(luigi.Task):
+    """Estimates the population density at a fine-grained scale (200m*200m) by
+    starting with coarse-grained data (1km*1km).
+
+    Valid for INSEE data, it estimates 200m*200m gridded population. As we
+    already have this information, one may compute accuracy metrics
+    (e.g. RMSE).
+
+    Attributes
+    ----------
+    city : str
+        City of interest
+    datapath : str
+        Indicates the folder where the task result has to be serialized
+    geoformat : str
+        Output file extension (by default: `GeoJSON`)
+    date_query : str
+        Date to which the OpenStreetMap data must be recovered (format:
+    AAAA-MM-DDThhmm)
+    step : int
+    default_height : int
+        Default building height, in meters (default: 3 meters)
+    meters_per_level : int
+        Default height per level, in meter (default: 3 meters)
+    walkable_distance : int
+            the bandwidth assumption for Kernel Density Estimation calculations
+    (meters)
+    compute_activity_types_kde : bool
+            determines if the densities for each activity type should be
+    computed
+    weighted_kde : bool
+            use Weighted Kernel Density Estimation or classic version
+    pois_weight : int
+            Points of interest weight equivalence with buildings (squared
+    meter)
+    log_weighted : bool
+            apply natural logarithmic function to surface weights
+    radius_search : int
+    use_median : bool
+    K_nearest : int
+    batch_size : int
+        Number of gridded sample to consider in each batch of data (must be
+    small if limited computing resources)
+    epochs : int
+        Number of times the data are exploited during training process
     """
     city = luigi.Parameter()
     training_cities = luigi.ListParameter()
