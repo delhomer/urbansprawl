@@ -2077,19 +2077,19 @@ class InferINSEEPopulationDownscaling(luigi.Task):
     def output(self):
         os.makedirs(os.path.join(self.datapath, "inference"), exist_ok=True)
         filepath = os.path.join(
-            self.datapath, "inference", self.city + "_X_Y.npz"
+            self.datapath, "inference", self.city + "_insee_Ypred.npz"
         )
         return luigi.LocalTarget(filepath)
 
     def run(self):
-        Y_train, X_train, _ = get_Y_X_features_population_data(
+        _, X_train, _ = get_Y_X_features_population_data(
             cities_selection=self.training_cities
         )
         Y_val, X_val, _ = get_Y_X_features_population_data(
             cities_selection=self.validation_cities
         )
-        model = build_downscaling_cnn(X_train, Y_train, X_val, Y_val)
+        model = build_downscaling_cnn(X_train.shape)
         model.load_weights(self.input()["model"].path)
         data = np.load(self.input()["features"].path)
         y_pred = model.predict(data["X"])
-        print(y_pred)
+        np.savez(self.output().path, y_pred=y_pred)

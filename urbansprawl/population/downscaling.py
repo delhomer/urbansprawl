@@ -63,14 +63,17 @@ def proportional_population_downscaling(df_osm_built, df_insee):
 	df_osm_built.drop('geom', axis=1, inplace=True)
 
 
-def build_downscaling_cnn(X_train, Y_train, X_val, Y_val):
+def build_downscaling_cnn(input_shape):
         """
         """
-        _, input_shape_pixels, input_shape_features = X_train.shape
-        input_shape = (input_shape_pixels, input_shape_features)
+        _, input_shape_pixels, input_shape_features = input_shape
         model = Sequential()
-        model.add(Conv1D(filters=10, kernel_size=1,
-                         strides=1, input_shape=input_shape))
+        model.add(
+                Conv1D(
+                        filters=10, kernel_size=1, strides=1,
+                        input_shape=(input_shape_pixels, input_shape_features)
+                )
+        )
         model.add(Activation("relu"))
         model.add(Conv1D(filters=5, kernel_size=1, strides=1))
         model.add(Activation("relu"))
@@ -105,7 +108,7 @@ def train_population_downscaling_model(X_train, Y_train, X_val, Y_val,
         keras.models.Sequential
 
         """
-        model = build_downscaling_cnn(X_train, Y_train, X_val, Y_val)
+        model = build_downscaling_cnn(X_train.shape)
         opt = optimizers.SGD(lr=0.01, decay=1e-6, momentum=0.9, nesterov=True)
         model.compile(loss="mean_absolute_error",
                       optimizer=opt,
