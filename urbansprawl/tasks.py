@@ -2085,8 +2085,133 @@ class InferINSEEPopulationDownscaling(luigi.Task):
         _, X_train, _ = get_Y_X_features_population_data(
             cities_selection=self.training_cities
         )
-        Y_val, X_val, _ = get_Y_X_features_population_data(
-            cities_selection=self.validation_cities
+        model = build_downscaling_cnn(X_train.shape)
+        model.load_weights(self.input()["model"].path)
+        data = np.load(self.input()["features"].path)
+        y_pred = model.predict(data["X"])
+        np.savez(self.output().path, y_pred=y_pred)
+
+
+
+class CreateInferenceGrid(luigi.Task):
+    """Create a set of georeferenced points starting from the GPW data where to
+    compute the urbansprawl features. Such data may be taken as the input for
+    the convolutional neural network that predicts population estimates.
+
+    Attributes
+    ----------
+    city : str
+        City of interest
+    """
+    datapath = luigi.Parameter("./data")
+    city = luigi.Parameter()
+
+    def requires(self):
+        return VectorizeLocalGPWData(self.datapath, self.city)
+
+    def output(self):
+        os.makedirs(os.path.join(self.datapath, "inference"), exist_ok=True)
+        filepath = os.path.join(
+            self.datapath, self.city ,"inference_grid.geojson"
+        )
+        return luigi.LocalTarget(filepath)
+
+    def run(self):
+        pass
+
+
+class InferGPWPopulationDownscaling(luigi.Task):
+    """Estimates the population density at a fine-grained scale (200m*200m) by
+    starting with coarse-grained data (1km*1km).
+
+    Valid for GPW data, it estimates 200m*200m gridded population, however we
+    do not have any ground-truth data for such an input.
+
+    Attributes
+    ----------
+    city : str
+        City of interest
+    datapath : str
+        Indicates the folder where the task result has to be serialized
+    geoformat : str
+        Output file extension (by default: `GeoJSON`)
+    date_query : str
+        Date to which the OpenStreetMap data must be recovered (format:
+    AAAA-MM-DDThhmm)
+    step : int
+    default_height : int
+        Default building height, in meters (default: 3 meters)
+    meters_per_level : int
+        Default height per level, in meter (default: 3 meters)
+    walkable_distance : int
+            the bandwidth assumption for Kernel Density Estimation calculations
+    (meters)
+    compute_activity_types_kde : bool
+            determines if the densities for each activity type should be
+    computed
+    weighted_kde : bool
+            use Weighted Kernel Density Estimation or classic version
+    pois_weight : int
+            Points of interest weight equivalence with buildings (squared
+    meter)
+    log_weighted : bool
+            apply natural logarithmic function to surface weights
+    radius_search : int
+    use_median : bool
+    K_nearest : int
+    batch_size : int
+        Number of gridded sample to consider in each batch of data (must be
+    small if limited computing resources)
+    epochs : int
+        Number of times the data are exploited during training process
+    """
+    city = luigi.Parameter()
+    training_cities = luigi.ListParameter()
+    validation_cities = luigi.ListParameter()
+    datapath = luigi.Parameter("./data")
+    geoformat = luigi.Parameter("geojson")
+    date_query = luigi.DateMinuteParameter(default=date.today())
+    step = luigi.IntParameter(default=400)
+    default_height = luigi.IntParameter(3)
+    meters_per_level = luigi.IntParameter(3)
+    walkable_distance = luigi.IntParameter(600)
+    compute_activity_types_kd = luigi.BoolParameter()
+    weighted_kde = luigi.BoolParameter()
+    pois_weights = luigi.IntParameter(9)
+    log_weighted = luigi.BoolParameter()
+    radius_search = luigi.IntParameter(750)
+    use_median = luigi.BoolParameter() # False
+    K_nearest = luigi.IntParameter(50)
+    batch_size = luigi.IntParameter(32)
+    epochs = luigi.IntParameter(50)
+
+    def requires(self):
+        return {"model": TrainPopulationDownscalingModel(
+            self.training_cities, self.validation_cities,
+            self.datapath, self.geoformat, self.date_query,
+            self.step, self.default_height, self.meters_per_level,
+            self.walkable_distance, self.compute_activity_types_kd,
+            self.weighted_kde, self.pois_weights, self.log_weighted,
+            self.radius_search, self.use_median, self.K_nearest),
+                "features": SplitPopulationFeatures(
+                    self.city, self.datapath, self.geoformat, self.date_query,
+                    self.step, self.default_height, self.meters_per_level,
+                    self.walkable_distance, self.compute_activity_types_kd,
+                    self.weighted_kde, self.pois_weights, self.log_weighted,
+                    self.radius_search, self.use_median, self.K_nearest
+                )
+        }
+
+    def output(self):
+        os.makedirs(os.path.join(self.datapath, "inference"), exist_ok=True)
+        filepath = os.path.join(
+            self.datapath, "inference", self.city + "_gpw_Ypred.npz"
+        )
+        return luigi.LocalTarget(filepath)
+
+    def run(self):
+        _, X_train, _ = get_Y_X_features_population_data(
+            cities_selection=self.training_cities
         )
         model = build_downscaling_cnn(X_train.shape)
         model.load_weights(self.input()["model"].path)
