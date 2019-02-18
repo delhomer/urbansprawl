@@ -21,6 +21,7 @@ tasks are visible at `localhost:8082` URL address.
 
 """
 
+from configparser import ConfigParser
 from datetime import date, datetime as dt
 import json
 import os
@@ -34,6 +35,7 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 import matplotlib.pyplot as plt
 import numpy as np
 import osmnx
+from osgeo import gdal, ogr, osr
 import pandas as pd
 import sh
 
@@ -57,6 +59,15 @@ from urbansprawl.population.urban_features import (compute_full_urban_features,
                                                    get_training_testing_data,
                                                    get_Y_X_features_population_data)
 from urbansprawl.population.downscaling import (train_population_downscaling_model, build_downscaling_cnn)
+
+
+config = ConfigParser()
+if os.path.isfile("config.ini"):
+    config.read("config.ini")
+else:
+    logger.error("No file config.ini!")
+    sys.exit(1)
+
 
 # Columns of interest corresponding to OSM keys
 OSM_TAG_COLUMNS = [ "amenity", "landuse", "leisure", "shop", "man_made",
@@ -457,9 +468,12 @@ class SetupProjection(luigi.Task):
         if self.table == "buildings":
             gdf.drop(gdf[gdf.geometry.area < MINIMUM_M2_BUILDING_AREA].index,
                      inplace=True)
-        proj_path = os.path.join(self.datapath, self.city, "utm_projection.json")
-        with open(proj_path, 'w') as fobj:
-            json.dump(gdf.crs, fobj)
+        proj_path = os.path.join(
+            self.datapath, self.city, "utm_projection.json"
+        )
+        if not os.path.isfile(proj_path):
+            with open(proj_path, 'w') as fobj:
+                json.dump(gdf.crs, fobj)
         gdf.to_file(self.output().path, driver="GeoJSON")
 
 
@@ -1252,7 +1266,51 @@ class GetINSEEData(luigi.Task):
             fobj.write(resp.content)
 
 
-class UnzipINSEEData(luigi.Task):
+class GetGPWData(luigi.Task):
+    """Download GPW data from NASA Earthdata website. As there is an
+    authentification step, a redirection must be undertaken.
+
+    GPW data access:
+
+    http://sedac.ciesin.columbia.edu/downloads/data/gpw-v4/gpw-v4-population-count-rev10/gpw-v4-population-count-rev10_2015_30_sec_tif.zip
+
+    Attributes
+    ----------
+    datapath : str
+        Path to the data folder on the file system
+    """
+    datapath = luigi.Parameter("./data")
+
+    @property
+    def filename(self):
+        return "gpw_v4_population_count_rev10_2015_30_sec"
+
+    @property
+    def path(self):
+        return os.path.join(
+            self.datapath, "gpw", self.filename + ".zip"
+        )
+
+    @property
+    def url(self):
+        return "http://sedac.ciesin.columbia.edu/downloads/data/gpw-v4/gpw-v4-population-count-rev10/gpw-v4-population-count-rev10_2015_30_sec_tif.zip"
+
+    def output(self):
+        return luigi.LocalTarget(self.path, format=MixedUnicodeBytes)
+
+    def run(self):
+        with requests.Session() as session:
+            r1 = session.request("get", self.url) # Handle redirection
+            login = config.get("credentials", "login")
+            password = config.get("credentials", "pw")
+            resp = requests.get(r1.url, auth=(login, password))
+            resp.raise_for_status()
+            with self.output().open('w') as fobj:
+                for chunk in resp.iter_content(chunk_size=1024*1024):
+                    fobj.write(chunk)
+
+
+class UnzipData(luigi.Task):
     """Task dedicated to unzip file
 
     To get trace that the task has be done, the task creates a text file with
@@ -1263,20 +1321,39 @@ class UnzipINSEEData(luigi.Task):
     ----------
     datapath : str
         Path to the data folder on the file system
+    datasource : str
+        Name of the data source, either 'insee' or 'gpw'
     """
     datapath = luigi.Parameter("./data")
+    datasource = luigi.Parameter("insee")
+
+    @property
+    def gpw_filename(self):
+        return "gpw_v4_population_count_rev10_2015_30_sec"
 
     @property
     def path(self):
-        return os.path.join(
-            self.datapath, "insee", '200m-carreaux-metropole.zip'
-        )
+        if self.datasource == "insee":
+            return os.path.join(
+                self.datapath, self.datasource, '200m-carreaux-metropole.zip'
+            )
+        elif self.datasource == "gpw":
+            return os.path.join(
+                self.datapath, self.datasource, self.gpw_filename + ".zip"
+                )
+        else:
+            raise ValueError("Unknown data source, choose 'insee' or 'gpw'.")
 
     def requires(self):
-        return GetINSEEData(self.datapath)
+        if self.datasource == "insee":
+            return GetINSEEData(self.datapath)
+        elif self.datasource == "gpw":
+            return GetGPWData(self.datapath)
+        else:
+            raise ValueError("Unknown data source, choose 'insee' or 'gpw'.")
 
     def output(self):
-        filepath = os.path.join(self.datapath, "insee", "unzip.done")
+        filepath = os.path.join(self.datapath, self.datasource, "unzip.done")
         return luigi.LocalTarget(filepath)
 
     def run(self):
@@ -1442,6 +1519,154 @@ class PlotINSEEData(luigi.Task):
         population.plot("pop_count", ax=ax, cax=cax,
                         cmap='YlOrRd', legend=True, vmin=0)
         ax.set_title("INSEE gridded population (in inhabitants)", fontsize=15)
+        fig.tight_layout()
+        fig.savefig(self.output().path)
+
+
+class ExtractLocalGPWData(luigi.Task):
+    """The raw GPW data is a tif image representing the world population; this
+    class uses gdal_translate Python binding for reducing the tif only to the
+    area of interest, following a provided set of coordinates
+
+    Attributes
+    ----------
+    datapath : str
+        Indicates the folder where the task result has to be serialized
+    city : str
+        Place of interest
+    """
+    datapath = luigi.Parameter("./data")
+    city = luigi.Parameter()
+
+    @property
+    def filename(self):
+        return "gpw_v4_population_count_rev10_2015_30_sec"
+
+    def requires(self):
+        return {
+            "gpw": UnzipData(self.datapath, "gpw"),
+            "bbox": GetBoundingBox(self.city, self.datapath)
+        }
+
+    def output(self):
+        filepath = os.path.join(
+            self.datapath, "gpw", "gpw_" + self.city + ".tif"
+        )
+        return luigi.LocalTarget(filepath)
+
+    def run(self):
+        city_gdf = gpd.read_file(self.input()["bbox"].path)
+        north, south, east, west = city_gdf.loc[0, ["bbox_north", "bbox_south",
+                                                    "bbox_east", "bbox_west"]]
+        print(north, south, east, west)
+        gdal.Translate(
+            self.output().path,
+            os.path.join(self.datapath, "gpw", self.filename + ".tif"),
+            projWin=[west, north, east, south]
+        )
+
+class VectorizeLocalGPWData(luigi.Task):
+    """Transform local GPW data as a geojson file in order to process the data
+
+    See GDAL documentation at https://pcjericks.github.io/py-gdalogr-cookbook/raster_layers.html#polygonize-a-raster-band
+
+    Attributes
+    ----------
+    datapath : str
+        Indicates the folder where the task result has to be serialized
+    city : str
+        Place of interest
+    """
+    datapath = luigi.Parameter("./data")
+    city = luigi.Parameter()
+
+    def requires(self):
+        return ExtractLocalGPWData(self.datapath, self.city)
+
+    def output(self):
+        filepath = os.path.join(
+            self.datapath, "gpw", "gpw_" + self.city + ".geojson"
+        )
+        return luigi.LocalTarget(filepath)
+
+    def run(self):
+        src_ds = gdal.Open(self.input().path)
+        band = src_ds.GetRasterBand(1)
+        maskband = band.GetMaskBand()
+        driver = ogr.GetDriverByName("GeoJSON")
+        dst_ds = driver.CreateDataSource(self.output().path)
+        srs = osr.SpatialReference()
+        srs.ImportFromWkt( src_ds.GetProjectionRef() )
+        dst_layer = dst_ds.CreateLayer(
+            "out_layer", geom_type=ogr.wkbPolygon, srs = srs
+        )
+        fd = ogr.FieldDefn( "pop_count", ogr.OFTInteger )
+        dst_layer.CreateField( fd )
+        dst_field = 0
+        gdal.Polygonize(
+            band, maskband, dst_layer, dst_field, [], callback=gdal.TermProgress
+        )
+        band = maskband = src_ds = dst_ds = None
+
+
+class PlotGPWData(luigi.Task):
+    """
+
+    Attributes
+    ----------
+    city : str
+        City of interest
+    datapath : str
+        Indicates the folder where the task result has to be serialized
+    geoformat : str
+        Output file extension (by default: `GeoJSON`)
+    date_query : str
+        Date to which the OpenStreetMap data must be recovered (format:
+    AAAA-MM-DDThhmm)
+    default_height : int
+        Default building height, in meters (default: 3 meters)
+    meters_per_level : int
+        Default height per level, in meter (default: 3 meters)
+    """
+    city = luigi.Parameter()
+    datapath = luigi.Parameter("./data")
+    geoformat = luigi.Parameter("geojson")
+    date_query = luigi.DateMinuteParameter(default=date.today())
+    figsize = luigi.IntParameter(8)
+
+    def requires(self):
+        return {"population": VectorizeLocalGPWData(self.datapath, self.city),
+                "graph": GetRouteGraph(self.city, self.datapath,
+                                       self.geoformat, self.date_query),
+                "proj": SetupProjection(self.city, self.datapath,
+                                        self.geoformat, self.date_query,
+                                        "pois")}
+
+    def output(self):
+        filepath = os.path.join(
+            self.datapath, self.city, "gpw_population.png"
+        )
+        return luigi.LocalTarget(filepath)
+
+    def run(self):
+        population = gpd.read_file(self.input()["population"].path)
+        population.columns = ["pop_count", "geometry"]
+        population.crs = {"init": "epsg:4326"}
+        proj_path = os.path.join(
+            self.datapath, self.city, "utm_projection.json"
+        )
+        with open(proj_path) as f:
+            population.to_crs(json.load(f), inplace=True)
+        graph = osmnx.load_graphml(self.input()["graph"].path, folder="")
+        fig, ax = osmnx.plot_graph(
+            graph, fig_height=self.figsize, fig_width=self.figsize, close=False,
+            show=False, edge_color='black', edge_alpha=0.15, node_alpha=0.05
+        )
+        divider = make_axes_locatable(ax)
+        cax = divider.append_axes("right", size="5%", pad=0.2)
+        population.plot("pop_count", ax=ax, cax=cax,
+                        cmap='YlOrRd', legend=True, vmin=0)
+        ax.set_title("GPW gridded population (in inhabitants)", fontsize=15)
         fig.tight_layout()
         fig.savefig(self.output().path)
 
